@@ -41,6 +41,7 @@ services:
     - ccdanodemodules:/var/www/localhost/htdocs/openemr/ccdaservice/node_modules:rw
     - logvolume:/var/log
     - couchdbvolume:/couchdb/data
+    - ./openemr.conf:/etc/apache2/conf.d/openemr.conf:ro
     environment:
       DEBUG_COLORS: "true"
       TERM: xterm-256color
@@ -162,6 +163,45 @@ services:
       LDAP_TLS_CA_CRT_FILENAME: ca.pem
       LDAP_TLS_CRT_FILENAME: server-cert.pem
       LDAP_TLS_KEY_FILENAME: server-key.pem
+  safety-sentinel:
+    restart: always
+    build:
+      context: ../../agents/safety-sentinel
+      dockerfile: Dockerfile
+    # Use host networking so the container shares the host's network stack.
+    # This lets the container reach:
+    #   - Ollama (127.0.0.1:11434) via localhost
+    #   - OpenEMR (127.0.0.1:8300, mapped from the openemr container) via localhost
+    # With host networking, port mappings are not used — uvicorn binds
+    # directly to host port 8001 via the PORT env var.
+    network_mode: host
+    env_file:
+    - ../../agents/safety-sentinel/.env
+    environment:
+      PORT: 8001
+      # With network_mode: host, localhost IS the Docker host machine.
+      OPENEMR_BASE_URL: http://localhost:8300
+      OLLAMA_BASE_URL: http://localhost:11434
+      # Whisper.cpp local transcription — bind-mounted from the host build.
+      WHISPER_CPP_BINARY: /whisper-build/bin/whisper-cli
+      WHISPER_CPP_MODEL: /whisper-models/ggml-base.en.bin
+      WHISPER_CPP_MODEL_NAME: base
+      # Shared libraries needed by whisper-cli (libwhisper, libggml, libggml-cpu, libggml-base).
+      LD_LIBRARY_PATH: /whisper-build/src:/whisper-build/ggml/src
+    volumes:
+      # whisper.cpp build output (binary + shared libs) — read-only
+      - /home/riwata/Documents/projects/ai_engineering/gauntlet-curriculum/projects/week_2/whisper.cpp/build:/whisper-build:ro
+      # Downloaded model files — read-only
+      - /home/riwata/Documents/projects/ai_engineering/gauntlet-curriculum/projects/week_2/whisper.cpp/models:/whisper-models:ro
+    depends_on:
+      openemr:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      start_period: 30s
+      interval: 30s
+      timeout: 5s
+      retries: 3
   mailpit:
     restart: unless-stopped
     image: axllent/mailpit:latest
