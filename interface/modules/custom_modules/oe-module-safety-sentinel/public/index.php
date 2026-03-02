@@ -17,11 +17,30 @@
 // Path depth: public/ → oe-module-safety-sentinel/ → custom_modules/ → modules/ → interface/ → openemr root
 require_once dirname(__FILE__, 5) . "/globals.php";
 
+// Prevent the parent PHP page from being cached so that URL changes take
+// effect immediately on the next normal page load (no hard-refresh needed).
+header('Cache-Control: no-store, no-cache, must-revalidate');
+header('Pragma: no-cache');
+
 // ── Safety Sentinel backend URL ──────────────────────────────────────────────
-// Set $GLOBALS['safety_sentinel_url'] in the OpenEMR globals table for deployed usage:
-//   UPDATE globals SET gl_value='http://161.35.61.60:8001' WHERE gl_name='safety_sentinel_url';
-// Falls back to localhost for local development.
-$sentinelUrl = $GLOBALS['safety_sentinel_url'] ?? 'http://localhost:8001';
+// The Safety Sentinel FastAPI app is reverse-proxied through the OpenEMR
+// HTTPS virtual host (port 9300) at the /sentinel/ path.  Loading it over
+// HTTPS is required for the browser to expose navigator.mediaDevices so that
+// microphone recording works.
+//
+// Priority:
+//   1. $GLOBALS['safety_sentinel_url'] — set via the globals table for custom hosts.
+//   2. Auto-computed HTTPS URL based on the current server hostname + port 9300.
+//   3. Localhost fallback for local development.
+if (!empty($GLOBALS['safety_sentinel_url'])) {
+    $sentinelUrl = $GLOBALS['safety_sentinel_url'];
+} else {
+    // Strip any existing port from HTTP_HOST, then attach the HTTPS port.
+    $serverHost  = preg_replace('/:\d+$/', '', $_SERVER['HTTP_HOST'] ?? 'localhost');
+    $sentinelUrl = ($serverHost === 'localhost')
+        ? 'http://localhost:8001'
+        : 'https://' . $serverHost . ':9300/sentinel';
+}
 
 // ── Current patient from session ─────────────────────────────────────────────
 $pid = (int)($_SESSION['pid'] ?? 0);
@@ -74,7 +93,7 @@ if (empty($puuid)) {
 $iframeUrl = $sentinelUrl . '/?' . http_build_query([
     'patient_id'   => $puuid,
     'patient_name' => $patientName,
-    '_v'           => '20260301d',
+    '_v'           => '20260302a',
 ]);
 
 ?>
@@ -98,8 +117,8 @@ $iframeUrl = $sentinelUrl . '/?' . http_build_query([
     id="safety-sentinel-frame"
     src="<?php echo attr($iframeUrl); ?>"
     title="<?php echo xla('Safety Sentinel Clinical Safety Check'); ?>"
-    sandbox="allow-scripts allow-same-origin allow-forms allow-modals"
-    allow="microphone"
+    sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads"
+    allow="microphone; camera"
 ></iframe>
 </body>
 </html>
